@@ -1,0 +1,78 @@
+# QC: builds the Android app (qc.apk) and publishes the website.
+# Runs on every push to main, or by hand from the Actions tab (Run workflow).
+name: QC build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: qc-build
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: Build qc.apk
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK (preinstalled on the runner)
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKM" ]; then
+            yes | "$SDKM" --licenses > /dev/null || true
+            "$SDKM" "platforms;android-34" "build-tools;34.0.0" || true
+          else
+            echo "sdkmanager not found, relying on the preinstalled SDK"
+          fi
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Build signed APK
+        run: gradle -p android assembleRelease --no-daemon --stacktrace
+
+      - name: Name it qc.apk
+        run: cp android/app/build/outputs/apk/release/*.apk qc.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qc-apk
+          path: qc.apk
+
+      - name: Publish a Release with qc.apk
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: app-${{ github.run_number }}
+          name: QC build ${{ github.run_number }}
+          files: qc.apk
+
+  site:
+    name: Publish website
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - id: deployment
+        uses: actions/deploy-pages@v4
